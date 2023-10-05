@@ -51,7 +51,7 @@ app.get("/posts/:id", validateId, async (req, res) => {
     `https://jsonplaceholder.typicode.com/posts/${id}`
   );
 
-  client.set(`post-${id}`, "EX", 10, JSON.stringify(data));
+  client.set(`post-${id}`, JSON.stringify(data), "EX", DEFAULT_EXPIRATION);
 
   res.json(data);
 });
