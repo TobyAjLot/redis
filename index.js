@@ -1,16 +1,20 @@
-import axios from "axios";
-import cors from "cors";
 import express from "express";
 import { createClient } from "redis";
+import util from "util";
+import axios from "axios";
 
-const redisClient = createClient({ legacyMode: true });
+const client = createClient({ legacyMode: true });
 
-await redisClient.connect();
+await client.connect();
+
+client.set = util.promisify(client.set);
+client.get = util.promisify(client.get);
 
 const app = express();
 const port = 8080;
 app.use(express.json());
-app.use(cors());
+
+const DEFAULT_EXPIRATION = 10;
 
 const validateId = (req, res, next) => {
   const id = req.params.id;
@@ -21,39 +25,35 @@ const validateId = (req, res, next) => {
   next();
 };
 
-app.get("/photos", async (req, res) => {
-  const albumId = req.query.albumId;
-  const photos = await getOrSetCache(`photos?albumId=${albumId}`, async () => {
-    const { data } = await axios.get(
-      "https://jsonplaceholder.typicode.com/photos",
-      { params: { albumId } }
-    );
-    return data;
-  });
-  res.json(photos);
+app.post("/", async (req, res) => {
+  const { key, value } = req.body;
+
+  const response = await client.set(key, value);
+  res.json(response);
 });
 
-app.get("/photos/:id", async (req, res) => {
-  const { id } = req.params.id;
-  const photo = getOrSetCache(`photos:${id}`, async () => {
-    const { data } = await axios.get(
-      `https://jsonplaceholder.typicode.com/photos/${id}`
-    );
-    return data;
-  });
-  res.json(photo);
+app.get("/", async (req, res) => {
+  const { key } = req.query;
+  const value = await client.get(key);
+  res.json(value);
 });
 
-const getOrSetCache = (key, cb) => {
-  return new Promise((resolve, reject) => {
-    redisClient.get(key, async (error, data) => {
-      if (error) return reject(error);
-      if (data) return resolve(JSON.parse(data));
-      const freshData = await cb();
-      redisClient.set(key, JSON.stringify(freshData));
-      resolve(freshData);
-    });
-  });
-};
+app.get("/posts/:id", validateId, async (req, res) => {
+  const { id } = req.params;
+
+  const cachedPost = await client.get(`post-${id}`);
+
+  if (cachedPost) {
+    return res.json(JSON.parse(cachedPost));
+  }
+
+  const { data } = await axios.get(
+    `https://jsonplaceholder.typicode.com/posts/${id}`
+  );
+
+  client.set(`post-${id}`, "EX", 10, JSON.stringify(data));
+
+  res.json(data);
+});
 
 app.listen(port, () => console.log(`Server listening on port ${port}`));
